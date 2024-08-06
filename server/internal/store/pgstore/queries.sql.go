@@ -114,6 +114,27 @@ func (q *Queries) GetRooms(ctx context.Context) ([]Room, error) {
 	return items, nil
 }
 
+const insertMessage = `-- name: InsertMessage :one
+INSERT INTO messages (
+  "room_id",
+  "message"
+)
+VALUES ($1, $2)
+RETURNING "id"
+`
+
+type InsertMessageParams struct {
+	RoomID  uuid.UUID
+	Message string
+}
+
+func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, insertMessage, arg.RoomID, arg.Message)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const insertRoom = `-- name: InsertRoom :one
 INSERT INTO rooms (
   "theme"

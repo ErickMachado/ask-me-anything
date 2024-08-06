@@ -28,6 +28,14 @@ SELECT
 FROM messages
 WHERE id = $1;
 
+-- name: InsertMessage :one
+INSERT INTO messages (
+  "room_id",
+  "message"
+)
+VALUES ($1, $2)
+RETURNING "id";
+
 -- name: GetRoomMessages :many
 SELECT
   "id",
