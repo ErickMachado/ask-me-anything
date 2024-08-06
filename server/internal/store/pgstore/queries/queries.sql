@@ -46,6 +46,16 @@ SELECT
 FROM messages
 WHERE room_id = $1;
 
+-- name: GetRoomMessage :one
+SELECT
+  "id",
+  "room_id",
+  "message",
+  "reaction_count",
+  "answered"
+FROM messages
+WHERE room_id = $1 AND id = $2;
+
 -- name: ReactToMessage :one
 UPDATE messages
 SET

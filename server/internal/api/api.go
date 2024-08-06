@@ -79,12 +79,19 @@ func NewHandler(q *pgstore.Queries) http.Handler {
 type MessageKind string
 
 const (
-	MessageKindCreated MessageKind = "message_created"
+	MessageKindCreated     MessageKind = "message_created"
+	MessageReactionCreated MessageKind = "message_reaction_created"
+	MessageReactionDeleted MessageKind = "message_reaction_deleted"
 )
 
 type MessageCreatedContent struct {
 	ID      string `json:"id"`
 	Message string `json:"message"`
+}
+
+type MessageReactionContent struct {
+	ID        string `json:"id"`
+	Reactions int64  `json:"reactions"`
 }
 
 type Message struct {
@@ -120,7 +127,7 @@ func (h *APIHandler) subscribe(w http.ResponseWriter, r *http.Request) {
 	_, err = h.q.GetRoom(r.Context(), roomID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			http.Error(w, "room not found", http.StatusBadRequest)
+			http.Error(w, "room not found", http.StatusNotFound)
 		} else {
 			http.Error(w, "something went wrong", http.StatusInternalServerError)
 		}
@@ -184,11 +191,112 @@ func (h *APIHandler) createRoom(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-func (h *APIHandler) getRooms(w http.ResponseWriter, r *http.Request) {}
+type GetRoomsResponse struct {
+	Rooms []pgstore.Room `json:"rooms"`
+}
 
-func (h *APIHandler) getRoomMessages(w http.ResponseWriter, r *http.Request) {}
+func (h *APIHandler) getRooms(w http.ResponseWriter, r *http.Request) {
+	rooms, err := h.q.GetRooms(r.Context())
+	if err != nil {
+		slog.Error("failed to get rooms", "error", err)
+		http.Error(w, "something went wrong", http.StatusInternalServerError)
+		return
+	}
 
-func (h *APIHandler) getRoomMessage(w http.ResponseWriter, r *http.Request) {}
+	data, _ := json.Marshal(GetRoomsResponse{
+		Rooms: rooms,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
+type GetRoomMessagesResponse struct {
+	Messages []pgstore.Message `json:"messages"`
+}
+
+func (h *APIHandler) getRoomMessages(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(chi.URLParam(r, "room_id"))
+	if err != nil {
+		http.Error(w, "invalid room ID", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.q.GetRoom(r.Context(), roomID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "room not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to get rooms", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+	messages, err := h.q.GetRoomMessages(r.Context(), roomID)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		slog.Error("failed to get rooms", "error", err)
+		http.Error(w, "something went wrong", http.StatusInternalServerError)
+		return
+	}
+
+	data, _ := json.Marshal(GetRoomMessagesResponse{
+		Messages: messages,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
+
+type GetRoomMessageResponse struct {
+	Message pgstore.Message `json:"message"`
+}
+
+func (h *APIHandler) getRoomMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(chi.URLParam(r, "room_id"))
+	if err != nil {
+		http.Error(w, "invalid room ID", http.StatusBadRequest)
+		return
+	}
+	messageID, err := uuid.Parse(chi.URLParam(r, "message_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.q.GetRoom(r.Context(), roomID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "room not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to get room", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+	message, err := h.q.GetRoomMessage(r.Context(), pgstore.GetRoomMessageParams{
+		RoomID: roomID,
+		ID:     messageID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "message not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to get message", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+
+	data, _ := json.Marshal(GetRoomMessageResponse{
+		Message: message,
+	})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	w.Write(data)
+}
 
 type createMessageBody struct {
 	Message string `json:"message"`
@@ -240,8 +348,134 @@ func (h *APIHandler) createRoomMessage(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (h *APIHandler) reactToMessage(w http.ResponseWriter, r *http.Request) {}
+type reactToMessageResponse struct {
+	ID        string `json:"id"`
+	Reactions int64  `json:"reactions"`
+}
 
-func (h *APIHandler) removeReactionFromMessage(w http.ResponseWriter, r *http.Request) {}
+func (h *APIHandler) reactToMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(chi.URLParam(r, "room_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
+	messageID, err := uuid.Parse(chi.URLParam(r, "message_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
 
-func (h *APIHandler) markMessageAsAswered(w http.ResponseWriter, r *http.Request) {}
+	_, err = h.q.GetMessage(r.Context(), messageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "message not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to get message", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+
+	reactions, err := h.q.ReactToMessage(r.Context(), messageID)
+	if err != nil {
+		slog.Error("failed to get message", "error", err)
+		http.Error(w, "something went wrong", http.StatusInternalServerError)
+		return
+	}
+
+	data, _ := json.Marshal(reactToMessageResponse{
+		ID:        messageID.String(),
+		Reactions: reactions,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	w.Write(data)
+
+	h.notifyClients(Message{
+		Kind: MessageReactionCreated,
+		Value: MessageReactionContent{
+			ID:        messageID.String(),
+			Reactions: reactions,
+		},
+		RoomID: roomID,
+	})
+}
+
+func (h *APIHandler) removeReactionFromMessage(w http.ResponseWriter, r *http.Request) {
+	roomID, err := uuid.Parse(chi.URLParam(r, "room_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
+	messageID, err := uuid.Parse(chi.URLParam(r, "message_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
+
+	msg, err := h.q.GetMessage(r.Context(), messageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "message not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to get message", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+	if msg.ReactionCount == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	reactions, err := h.q.RemoveReactionFromMessage(r.Context(), messageID)
+	if err != nil {
+		slog.Error("failed to remove reaction", "error", err)
+		http.Error(w, "something went wrong", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusNoContent)
+
+	h.notifyClients(Message{
+		Kind: MessageReactionDeleted,
+		Value: MessageReactionContent{
+			ID:        messageID.String(),
+			Reactions: reactions,
+		},
+		RoomID: roomID,
+	})
+}
+
+func (h *APIHandler) markMessageAsAswered(w http.ResponseWriter, r *http.Request) {
+	messageID, err := uuid.Parse(chi.URLParam(r, "message_id"))
+	if err != nil {
+		http.Error(w, "invalid message ID", http.StatusBadRequest)
+		return
+	}
+
+	_, err = h.q.GetMessage(r.Context(), messageID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			http.Error(w, "message not found", http.StatusNotFound)
+		} else {
+			slog.Error("failed to retrieve message from DB", "error", err)
+			http.Error(w, "something went wrong", http.StatusInternalServerError)
+		}
+
+		return
+	}
+	err = h.q.MarkMessageAsAnswered(r.Context(), messageID)
+	if err != nil {
+		slog.Error("failed to mark message as answered", "error", err)
+		http.Error(w, "something went wrong", http.StatusInternalServerError)
+
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
