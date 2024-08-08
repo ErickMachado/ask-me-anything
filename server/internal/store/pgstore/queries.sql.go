@@ -62,8 +62,8 @@ WHERE room_id = $1 AND id = $2
 `
 
 type GetRoomMessageParams struct {
-	RoomID uuid.UUID
-	ID     uuid.UUID
+	RoomID uuid.UUID `json:"room_id"`
+	ID     uuid.UUID `json:"id"`
 }
 
 func (q *Queries) GetRoomMessage(ctx context.Context, arg GetRoomMessageParams) (Message, error) {
@@ -153,8 +153,8 @@ RETURNING "id"
 `
 
 type InsertMessageParams struct {
-	RoomID  uuid.UUID
-	Message string
+	RoomID  uuid.UUID `json:"room_id"`
+	Message string    `json:"message"`
 }
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (uuid.UUID, error) {
